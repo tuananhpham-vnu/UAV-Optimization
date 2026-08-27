@@ -1,0 +1,30 @@
+# Blueprint deploy web demo len Render (https://render.com)
+#
+# Cach dung:
+#   1. Push repo len GitHub (nho commit ca data/conveyor_2d.mp4 de co video mau)
+#   2. Render Dashboard -> New -> Blueprint -> chon repo nay
+#   3. Render doc file nay va tu dung service, khong can cau hinh tay
+#
+# Luu y goi phu thuoc: dung requirements-web.txt (opencv-python-headless)
+# chu KHONG phai requirements.txt (opencv-python) — ban day du can thu vien GUI
+# cua he dieu hanh, server Render khong co nen se loi ImportError libGL.so.1
+
+services:
+  - type: web
+    name: mvp1-conveyor-demo
+    runtime: python
+    plan: free
+    region: singapore
+    branch: main
+    buildCommand: pip install -r requirements-web.txt
+    startCommand: >-
+      streamlit run app.py
+      --server.port $PORT
+      --server.address 0.0.0.0
+      --server.headless true
+      --server.enableCORS false
+      --server.enableXsrfProtection false
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
