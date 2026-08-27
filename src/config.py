@@ -14,11 +14,20 @@ MORPH_KERNEL = 5      # kich thuoc kernel open/close khu nhieu
 MIN_AREA = 400        # dien tich contour toi thieu (px) - loai nhieu vun
 MAX_AREA = 200_000    # dien tich toi da - loai vung nen loi
 
+# ---- Tach vat cung mau cham nhau (convexity-defect split) ----
+# Hinh loi don le co solidity = A/A_hull ~ 1.0; blob do hai vat cham nhau tut
+# xuong ~0.87 vi phan lom o cho giao nhau. Chi blob duoi nguong moi bi thu tach
+# -> khong ton chi phi cho khung hinh binh thuong.
+SPLIT_SOLIDITY_MAX = 0.93
+SPLIT_MIN_DEFECT_DEPTH = 8.0   # px - do sau toi thieu de coi la cho giao that
+SPLIT_MAX_DEPTH = 2            # so lan tach de quy -> toi da 4 vat trong 1 blob
+
 # ---- Phan loai hinh dang ----
-# Diem khop = dien tich contour / dien tich primitive bao quanh no.
-# Hinh that luon dat >= 0.91 voi primitive dung cua no; blob do nhieu vat
-# cham nhau bi gop lai chi dat ~0.68 -> nguong 0.85 tach sach hai truong hop.
-SHAPE_FIT_MIN = 0.85
+# Diem khop = IoU giua contour va primitive khop nhat voi no.
+# Do tren conveyor_2d.mp4: hinh that dat 0.86-0.99 voi primitive dung cua no,
+# primitive sai chi dat <= 0.81, blob do nhieu vat cham nhau khong qua 0.71.
+# Nguong 0.78 nam giua hai vung, co bien an toan ca hai phia.
+SHAPE_FIT_MIN = 0.78
 
 # ---- Phan loai kich thuoc (nguong dien tich, px) ----
 SIZE_SMALL_MAX = 3000

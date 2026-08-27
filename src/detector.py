@@ -5,6 +5,8 @@ Chien luoc 2 buoc (nhanh + tach duoc vat cham nhau):
      Chi 1 lan inRange + 1 lan morphology tren toan khung -> re.
   2. Tach mask do theo tung dai Hue: hai san pham khac mau cham nhau se thanh
      hai contour rieng thay vi bi gop lam mot.
+  3. Tach hinh hoc (split_touching): hai san pham *cung mau* cham nhau van bi gop
+     sau buoc 2 -> cat theo duong noi hai diem lom sau nhat cua contour.
 
 Dau ra la detection tho (chua phan loai) dung chung cho classifier va tracker.
 """
@@ -69,22 +71,92 @@ class Detector:
             if cv2.countNonZero(m) < self.min_area:
                 continue
             contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            for cnt in contours:
-                area = cv2.contourArea(cnt)
-                if area < self.min_area or area > cfg.MAX_AREA:
+            for raw in contours:
+                if cv2.contourArea(raw) < self.min_area:
                     continue
-                x, y, w, h = cv2.boundingRect(cnt)
-                mo = cv2.moments(cnt)
-                if mo["m00"] == 0:
-                    continue
-                detections.append(
-                    {
-                        "bbox": (x, y, w, h),
-                        "centroid": (int(mo["m10"] / mo["m00"]),
-                                     int(mo["m01"] / mo["m00"])),
-                        "area": area,
-                        "contour": cnt,
-                        "color_hint": color_hint,
-                    }
-                )
+                # Vat cung mau cham nhau khong tach duoc bang Hue -> tach hinh hoc
+                for cnt in split_touching(raw, self.min_area):
+                    area = cv2.contourArea(cnt)
+                    if area < self.min_area or area > cfg.MAX_AREA:
+                        continue
+                    x, y, w, h = cv2.boundingRect(cnt)
+                    mo = cv2.moments(cnt)
+                    if mo["m00"] == 0:
+                        continue
+                    detections.append(
+                        {
+                            "bbox": (x, y, w, h),
+                            "centroid": (int(mo["m10"] / mo["m00"]),
+                                         int(mo["m01"] / mo["m00"])),
+                            "area": area,
+                            "contour": cnt,
+                            "color_hint": color_hint,
+                        }
+                    )
         return detections, mask, hsv
+
+
+def _deep_defects(cnt):
+    """Tra ve 2 diem lom sau nhat cua contour (neu co)."""
+    if len(cnt) < 4:
+        return None
+    hull = cv2.convexHull(cnt, returnPoints=False)
+    if hull is None or len(hull) < 3:
+        return None
+    defects = cv2.convexityDefects(cnt, hull)
+    if defects is None or len(defects) < 2:
+        return None
+    d = defects.reshape(-1, 4)
+    d = d[np.argsort(-d[:, 3])][:2]
+    # depth cua OpenCV duoc luu o don vi 1/256 px
+    if d[1][3] / 256.0 < cfg.SPLIT_MIN_DEFECT_DEPTH:
+        return None
+    return (tuple(int(v) for v in cnt[d[0][2]][0]),
+            tuple(int(v) for v in cnt[d[1][2]][0]))
+
+
+def split_touching(cnt, min_area=None, depth=0):
+    """Tach contour cua hai vat cung mau cham nhau thanh cac contour rieng.
+
+    Nguyen ly: hop cua hai hinh loi tao ra dung hai diem lom sau tai cho chung
+    giao nhau. Cat mask theo duong noi hai diem do se tra lai hai vat ban dau.
+    De quy toi SPLIT_MAX_DEPTH lan de xu ly blob gom hon hai vat.
+
+    Tra ve list contour theo toa do goc (chinh contour ban dau neu khong tach duoc).
+    """
+    min_area = cfg.MIN_AREA if min_area is None else min_area
+    area = cv2.contourArea(cnt)
+    hull_area = cv2.contourArea(cv2.convexHull(cnt))
+    solidity = area / hull_area if hull_area > 0 else 1.0
+    if depth >= cfg.SPLIT_MAX_DEPTH or solidity > cfg.SPLIT_SOLIDITY_MAX:
+        return [cnt]
+
+    pts = _deep_defects(cnt)
+    if pts is None:
+        return [cnt]
+
+    # Ve blob vao ROI co dem vien, cat, roi tach thanh phan lien thong
+    x, y, w, h = cv2.boundingRect(cnt)
+    pad = 2
+    roi = np.zeros((h + 2 * pad, w + 2 * pad), np.uint8)
+    off = (x - pad, y - pad)
+    cv2.drawContours(roi, [cnt - off], -1, 255, cv2.FILLED)
+    cv2.line(roi, (pts[0][0] - off[0], pts[0][1] - off[1]),
+             (pts[1][0] - off[0], pts[1][1] - off[1]), 0, 3)
+
+    n, labels = cv2.connectedComponents(roi)
+    parts = []
+    for i in range(1, n):
+        m = (labels == i).astype(np.uint8) * 255
+        if cv2.countNonZero(m) < min_area:
+            continue
+        cc, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in cc:
+            parts.append(c + off)
+
+    if len(parts) < 2:
+        return [cnt]   # cat khong ra hai manh dang ke -> giu nguyen
+    out = []
+    for pcnt in parts:
+        out += split_touching(pcnt, min_area, depth + 1)
+    return out

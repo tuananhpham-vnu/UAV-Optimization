@@ -45,9 +45,9 @@ Terminal in ra:
 
 ```
 Frames xu ly      : 600
-FPS xu ly (thuat toan): 77.8
-FPS ke ca I/O ghi video: 53.0
-Tong san pham dem duoc : 39
+FPS xu ly (thuat toan): 56.8
+FPS ke ca I/O ghi video: 42.2
+Tong san pham dem duoc : 40
          blue_circle: 5
          blue_square: 1
        ...
@@ -79,13 +79,17 @@ Blob bi tu choi (khong khop hinh nao): 1
   frame  472  #29  red      best_fit=0.685
 ```
 
-nghĩa là có contour không khớp hình tròn/vuông/tam giác nào đủ tốt — gần như luôn
-là **hai sản phẩm cùng màu chạm nhau bị gộp làm một**. Hệ thống gán `unknown`,
-vẽ khung xám, và **không đếm** — cố ý như vậy, vì gán đại một nhãn sẽ làm sai cả
-Classification lẫn Counting. Chi tiết điểm khớp nằm trong `outputs/log_rejected.csv`.
+nghĩa là có contour không khớp hình tròn/vuông/tam giác nào đủ tốt. Hệ thống gán
+`unknown`, vẽ khung xám, và **không đếm** — cố ý như vậy, vì gán đại một nhãn sẽ
+làm sai cả Classification lẫn Counting. Chi tiết điểm khớp nằm trong
+`outputs/log_rejected.csv`.
 
-Nếu số blob bị từ chối nhiều bất thường trên video tự quay, xem mục 5 —
-thường là do `SAT_MIN` quá thấp làm nền dính vào contour, chứ không phải do vật chạm nhau.
+Trên `conveyor_2d.mp4` **không có dòng này** — hai vật cùng màu chạm nhau đã được
+`split_touching` cắt ra. Nếu nó xuất hiện trên video tự quay, thứ tự nghi ngờ:
+
+1. `SAT_MIN` quá thấp → nền dính vào contour làm méo hình (kiểm tra bằng `--mask`)
+2. Vật che nhau quá sâu, chỉ còn thấy một mẩu → không đủ thông tin, đành chịu
+3. `SHAPE_FIT_MIN` đặt quá cao so với chất lượng ảnh
 
 Con số FPS sẽ khác nhau tuỳ máy — KPI cần đạt là **≥ 30 FPS** ở dòng
 *"FPS xu ly (thuat toan)"* (dòng còn lại có tính cả thời gian ghi file video,
@@ -105,9 +109,12 @@ Video thật có nền và ánh sáng khác video giả lập, nên phải tune 
 4. Hình thật bị gán `unknown` (khung xám) → **giảm** `SHAPE_FIT_MIN`;
    ngược lại vật chạm nhau vẫn lọt nhãn sai → **tăng** `SHAPE_FIT_MIN`
    (đối chiếu cột `fit_*` trong `log_rejected.csv`)
-5. Nhãn `S`/`M`/`L` lệch → chỉnh `SIZE_SMALL_MAX`, `SIZE_MEDIUM_MAX`
+5. Hai vật cùng màu chạm nhau vẫn dính làm một → **tăng** `SPLIT_SOLIDITY_MAX`
+   (0.93 → 0.96) để nhiều blob được thử tách hơn; ngược lại nếu một vật đơn lẻ bị
+   cắt đôi oan → **giảm** `SPLIT_SOLIDITY_MAX` hoặc tăng `SPLIT_MIN_DEFECT_DEPTH`
+6. Nhãn `S`/`M`/`L` lệch → chỉnh `SIZE_SMALL_MAX`, `SIZE_MEDIUM_MAX`
    (xem cột `area_px` trong CSV để biết diện tích thật của từng loại)
-6. Màu sản phẩm không nằm trong 5 dải mặc định → sửa `COLOR_RANGES`
+7. Màu sản phẩm không nằm trong 5 dải mặc định → sửa `COLOR_RANGES`
    (Hue trong OpenCV là 0..179, **không phải** 0..359)
 
 Vạch đếm mặc định ở giữa khung (`COUNT_LINE_RATIO = 0.5`).
@@ -121,7 +128,8 @@ Vạch đếm mặc định ở giữa khung (`COUNT_LINE_RATIO = 0.5`).
 | `ModuleNotFoundError: config` | Đang chạy `cd src && python demo.py` — hãy chạy `python src/demo.py` từ gốc repo |
 | Cửa sổ `--show` không hiện | Chạy trong môi trường không có GUI (SSH/WSL không X11) — bỏ `--show`, xem file video xuất ra |
 | Đếm thiếu/thừa so với thực tế | Xem mục 5, tune `SAT_MIN` và `MIN_AREA` trước |
-| Vật hiện khung xám, nhãn `unknown` | Đúng thiết kế khi hai vật cùng màu chạm nhau — xem mục 4.1 |
+| Vật hiện khung xám, nhãn `unknown` | Hệ thống từ chối đoán vì contour không khớp hình nào — xem mục 4.1 |
+| Một vật đơn lẻ bị cắt thành 2 bbox | `split_touching` cắt oan — xem mục 5, bước 5 |
 
 ## 7. Web demo (Streamlit)
 

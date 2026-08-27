@@ -8,6 +8,8 @@ Dac trung dung (deu bat bien voi phep tinh tien, khong can training):
   - area                              : dinh danh kich thuoc S/M/L
 """
 
+import itertools
+
 import cv2
 import numpy as np
 
@@ -50,36 +52,92 @@ def extract_features(det, hsv):
     }
 
 
-def shape_fit_scores(cnt, area):
-    """Cham diem contour khop voi tung primitive: A_contour / A_primitive.
+def _triangle_of(cnt):
+    """Tam giac khop nhat voi contour: rut convex hull ve dung 3 dinh.
 
-    Khop hoan hao -> 1.0. Uu diem so voi circularity/extent don thuan: blob do
-    nhieu vat cham nhau khong khop primitive nao, nen bi phat hien thay vi bi
-    ep vao nhan gan nhat.
+    Khong dung cv2.minEnclosingTriangle: ham do tra ve ket qua sai tren mot so
+    point set (da gap tam giac dien tich 5811 px nhung bao boi tam giac 8694 px,
+    dinh nam ngoai han hull), khien tam giac that bi cham diem nhu blob hong.
     """
-    _, radius = cv2.minEnclosingCircle(cnt)
-    circle_area = np.pi * radius * radius
+    hull = cv2.convexHull(cnt)
+    peri = cv2.arcLength(hull, True)
+    if peri <= 0:
+        return None
+    # Tim epsilon nho nhat cho ra <= 3 dinh
+    lo, hi = 0.01, 0.5
+    for _ in range(20):
+        mid = (lo + hi) / 2
+        if len(cv2.approxPolyDP(hull, mid * peri, True)) > 3:
+            lo = mid
+        else:
+            hi = mid
+    approx = cv2.approxPolyDP(hull, hi * peri, True).reshape(-1, 2)
+    if len(approx) == 3:
+        return approx.astype(np.int32)
+    # approxPolyDP suy bien -> chon 3 dinh hull cho dien tich lon nhat
+    pts = hull.reshape(-1, 2)
+    if len(pts) < 3:
+        return None
+    best, best_area = None, -1.0
+    for i, j, k in itertools.combinations(range(len(pts)), 3):
+        tri = pts[[i, j, k]]
+        ar = abs(cv2.contourArea(tri.astype(np.int32)))
+        if ar > best_area:
+            best, best_area = tri, ar
+    return best.astype(np.int32) if best is not None else None
 
-    (_, (rw, rh), _) = cv2.minAreaRect(cnt)
-    rect_area = rw * rh
 
-    tri_area, _ = cv2.minEnclosingTriangle(cnt)
+def shape_fit_scores(cnt, area=None):
+    """Cham diem contour khop voi tung primitive bang IoU (intersection over union).
 
-    return {
-        "circle": area / circle_area if circle_area > 0 else 0.0,
-        "square": area / rect_area if rect_area > 0 else 0.0,
-        "triangle": area / float(tri_area) if tri_area > 0 else 0.0,
+    IoU doi xung: phat ca truong hop primitive to hon vat lan nho hon vat, nen
+    blob do nhieu vat cham nhau khong the an diem cao o bat ky primitive nao.
+    Khop hoan hao -> 1.0.
+    """
+    (cx, cy), radius = cv2.minEnclosingCircle(cnt)
+    rect = cv2.boxPoints(cv2.minAreaRect(cnt))
+    tri = _triangle_of(cnt)
+
+    # Canvas du rong cho ca contour lan moi primitive
+    bounds = [cnt.reshape(-1, 2), rect,
+              np.array([[cx - radius, cy - radius], [cx + radius, cy + radius]])]
+    if tri is not None:
+        bounds.append(tri)
+    pts = np.vstack(bounds).astype(np.float64)
+    x0, y0 = np.floor(pts.min(0)).astype(int) - 2
+    x1, y1 = np.ceil(pts.max(0)).astype(int) + 2
+    h, w = int(y1 - y0), int(x1 - x0)
+    if h <= 0 or w <= 0:
+        return {"circle": 0.0, "square": 0.0, "triangle": 0.0}
+
+    obj = np.zeros((h, w), np.uint8)
+    cv2.drawContours(obj, [cnt - (x0, y0)], -1, 255, cv2.FILLED)
+
+    def iou(draw):
+        prim = np.zeros((h, w), np.uint8)
+        draw(prim)
+        inter = cv2.countNonZero(cv2.bitwise_and(obj, prim))
+        union = cv2.countNonZero(cv2.bitwise_or(obj, prim))
+        return inter / union if union else 0.0
+
+    scores = {
+        "circle": iou(lambda m: cv2.circle(
+            m, (int(round(cx - x0)), int(round(cy - y0))), int(round(radius)), 255, -1)),
+        "square": iou(lambda m: cv2.fillPoly(m, [np.int32(rect - (x0, y0))], 255)),
+        "triangle": 0.0 if tri is None else iou(
+            lambda m: cv2.fillPoly(m, [np.int32(tri - (x0, y0))], 255)),
     }
+    return scores
 
 
-def classify_shape(cnt, area):
+def classify_shape(cnt, area=None):
     """Gan nhan hinh dang + do tin cay = diem khop.
 
     Tra ve ("unknown", diem) khi khong primitive nao khop du tot — thuong la
     hai san pham cung mau cham nhau bi gop thanh mot contour. Tra "unknown"
     tot hon la bia ra mot nhan trong nhu chac chan.
     """
-    scores = shape_fit_scores(cnt, area)
+    scores = shape_fit_scores(cnt)
     label = max(scores, key=scores.get)
     best = scores[label]
     if best < cfg.SHAPE_FIT_MIN:
